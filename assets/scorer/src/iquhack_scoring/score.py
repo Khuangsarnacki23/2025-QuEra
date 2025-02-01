@@ -12,7 +12,8 @@ from bloqade.move.analysis import (
 )
 from qiskit import QuantumCircuit
 from qiskit.qasm2.exceptions import QASM2ParseError
-from mqt import qcec
+# from mqt import qcec
+import qiskit.quantum_info
 
 import dataclasses
 
@@ -30,14 +31,22 @@ def gen_qiskit(qasm_str: str):
         raise e
 
 
-def verify_circuits(prog1: str, prog2: str):
+def verify_circuits(prog1: str, prog2: str)-> bool:
+    """
+    Check that two circuits are the same by validating that their unitary matrices are equivalent.
+    """
 
     circ1 = gen_qiskit(prog1)
     circ2 = gen_qiskit(prog2)
-
-    result = qcec.verify(circ1, circ2)
-
-    return result.considered_equivalent()
+    
+    if circ1.num_qubits>12 or circ2.num_qubits>12:
+        print("Too many qubits to compute the unitary!")
+        return False
+    
+    op1 = qiskit.quantum_info.Operator.from_circuit(circ1)
+    op2 = qiskit.quantum_info.Operator.from_circuit(circ2)
+    return op1.equiv(op2)
+    # return qcec.verify(circ1, circ2).considered_equivalent()
 
 
 def get_zone_locations():
@@ -146,13 +155,13 @@ class Renderer:
                     gate_locations[end] - storage_locations[start]
                 )
                 yy = -10 * path_inter[1]
-                plt.plot(xx, yy, color=color, zorder=-100)
+                ax.plot(xx, yy, color=color, zorder=-100)
                 if isinstance(flying, core.value.QubitRef):
                     circ = matplotlib.patches.Circle(
                         (xx[-len(xx) // 20], yy[-len(yy) // 20]), 0.25, color="b"
                     )
                     ax.add_artist(circ)
-                    plt.text(
+                    ax.text(
                         xx[-len(xx) // 20],
                         yy[-len(yy) // 20],
                         str(flying.qubit_id),
@@ -169,13 +178,13 @@ class Renderer:
                     storage_locations[end] - storage_locations[start]
                 )
                 yy = -3 * path_intra[1]
-                plt.plot(xx, yy, color=color, zorder=-100)
+                ax.plot(xx, yy, color=color, zorder=-100)
                 if isinstance(flying, core.QubitRef):
                     circ = matplotlib.patches.Circle(
                         (xx[-len(xx) // 20], yy[-len(yy) // 20]), 0.25, color="b"
                     )
                     ax.add_artist(circ)
-                    plt.text(
+                    ax.text(
                         xx[-len(xx) // 20],
                         yy[-len(yy) // 20],
                         str(flying.qubit_id),
@@ -192,13 +201,13 @@ class Renderer:
                     gate_locations[end] - gate_locations[start]
                 )
                 yy = +3 * path_intra[1] - 10
-                plt.plot(xx, yy, color=color, zorder=-100)
+                ax.plot(xx, yy, color=color, zorder=-100)
                 if isinstance(flying, core.QubitRef):
                     circ = matplotlib.patches.Circle(
                         (xx[-len(xx) // 20], yy[-len(yy) // 20]), 0.25, color="b"
                     )
                     ax.add_artist(circ)
-                    plt.text(
+                    ax.text(
                         xx[-len(xx) // 20],
                         yy[-len(yy) // 20],
                         str(flying.qubit_id),
@@ -215,13 +224,13 @@ class Renderer:
                     storage_locations[end] - gate_locations[start]
                 )
                 yy = 10 * path_inter[1] - 10
-                plt.plot(xx, yy, color=color, zorder=-100)
+                ax.plot(xx, yy, color=color, zorder=-100)
                 if isinstance(flying, core.QubitRef):
                     circ = matplotlib.patches.Circle(
                         (xx[-len(xx) // 20], yy[-len(yy) // 20]), 0.25, color="b"
                     )
                     ax.add_artist(circ)
-                    plt.text(
+                    ax.text(
                         xx[-len(xx) // 20],
                         yy[-len(yy) // 20],
                         str(flying.qubit_id),
@@ -340,10 +349,17 @@ class Renderer:
         return ani
 
 
+def _default_qasm():
+    return """
+OPENQASM 2.0;
+include "qelib1.inc";
+"""
+
+
 @dataclasses.dataclass(frozen=True)
 class MoveScorer:
     mt: ir.Method
-    expected_qasm: str
+    expected_qasm: str = dataclasses.field(default_factory=_default_qasm)
 
     CZ_COST = 1.0
     LOCAL_COST = 0.5
@@ -484,9 +500,18 @@ class MoveScorer:
         move_analysis_result = self._run_move_analysis()
         return renderer.animate(move_analysis_result, fig, ax)
 
-    def score(self):
-        """Return a dictionary of scores for the method"""
-        self.validate()
+    def score(self, run_validation=True):
+        """Return a dictionary of scores for the method
+
+        Args
+            run_validation: (bool, Optinoal) run validation against the `expected_qasm`, default is True.
+
+        Returns
+            Dict[str, int | float] the score results for the program.
+
+        """
+        if run_validation:
+            self.validate()
         move_analysis_result = self._run_move_analysis()
         move_score = self._score_moves(move_analysis_result)
         gate_store = self._score_gates(move_analysis_result=move_analysis_result)
@@ -502,3 +527,31 @@ class MoveScorer:
         )
 
         return {**move_score, **gate_store, "overall": overall_score}
+
+if __name__=="__main__":
+    str1 = """
+    OPENQASM 2.0;
+    include "qelib1.inc";
+
+
+    // Qubits: [q(0), q(1), q(2)]
+    qreg q[3];
+
+
+    cz q[0],q[1];
+    cx q[2],q[1];
+    """
+    
+    str2 = """
+    OPENQASM 2.0;
+    include "qelib1.inc";
+
+
+    // Qubits: [q(0), q(1), q(2)]
+    qreg q[3];
+
+
+    cz q[0],q[1];
+    cz q[2],q[1];
+    """
+    print(verify_circuits(str1, str1))
